@@ -82,10 +82,63 @@ def send_message(message):
 
     payload = {
         "chat_id": CHAT_ID,
+import os
+import requests
+import schedule
+import time
+import re
+
+from bs4 import BeautifulSoup
+from datetime import datetime
+
+
+# ==========================================
+# TELEGRAM CONFIG
+# ==========================================
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+
+
+# ==========================================
+# TRACKS TO SCAN
+# ==========================================
+
+TRACKS = [
+    "EVD",   # Evangeline
+    "DED",   # Delta Downs
+    "CT",    # Charles Town
+    "PRX",   # Parx
+    "PEN"    # Penn National
+]
+
+
+# ==========================================
+# SEND TELEGRAM MESSAGE
+# ==========================================
+
+def send_message(message):
+
+    url = (
+        f"https://api.telegram.org/bot"
+        f"{BOT_TOKEN}/sendMessage"
+    )
+
+    payload = {
+        "chat_id": CHAT_ID,
         "text": message
     }
 
-    requests.post(url, json=payload)
+    try:
+        requests.post(url, json=payload, timeout=20)
+
+    except Exception as e:
+        print(f"Telegram send failed: {e}")
+
+
+# ==========================================
+# SCRAPE LIVE RACECARDS
+# ==========================================
 
 def get_racecard(track_code):
 
@@ -101,12 +154,21 @@ def get_racecard(track_code):
     }
 
     try:
-        response = requests.get(url, headers=headers, timeout=20)
+
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=20
+        )
 
         if response.status_code != 200:
+            print(f"No racecard for {track_code}")
             return []
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser"
+        )
 
         horses = []
 
@@ -114,9 +176,15 @@ def get_racecard(track_code):
 
         for row in rows:
 
-            text = row.get_text(" ", strip=True)
+            text = row.get_text(
+                " ",
+                strip=True
+            )
 
-            if "Claiming" in text:
+            if (
+                "Claiming" in text
+                or "Maiden Claiming" in text
+            ):
 
                 horses.append({
                     "raw": text,
@@ -126,66 +194,73 @@ def get_racecard(track_code):
         return horses
 
     except Exception as e:
+
         print(f"Scrape failed for {track_code}: {e}")
+
         return []
+
+
 # ==========================================
-# DAILY SCAN
+# PARSE CLAIMING VALUE
 # ==========================================
 
+def parse_claiming_value(text):
 
-def daily_scan():
-
-    def daily_scan():
-
-    send_message("🚨 LIVE DAILY CLASS DROPPER REPORT 🚨")
-
-    all_horses = []
-
-    for track in TRACKS:
-
-        entries = get_racecard(track)
-
-        droppers = detect_class_droppers(entries)
-
-        all_horses.extend(droppers)
-
-    ranked = sorted(
-        all_horses,
-        key=lambda x: x['rating'],
-        reverse=True
+    matches = re.findall(
+        r'\$(\d+[,\d]*)',
+        text
     )
 
-    top = ranked[:10]
+    if not matches:
+        return 0
 
-    if not top:
-        send_message("No major class droppers detected today.")
-        return
+    value = matches[0].replace(",", "")
 
-    for horse in top:
+    try:
+        return int(value)
 
-        msg = f'''
-🏇 {horse["track"]}
-
-{horse["horse"]}
-
-Claim Drop:
-${horse["previous_claim"]:,} → ${horse["today_claim"]:,}
-
-AI Rating:
-{horse["rating"]}/10
-'''
-
-        send_message(msg)
+    except:
+        return 0
 
 
 # ==========================================
-# SCHEDULE
+# DETECT CLASS DROPPERS
 # ==========================================
 
-schedule.every().day.at("13:00").do(daily_scan)
+def detect_class_droppers(entries):
 
-print("Telegram Betting Bot Running...")
+    horses = []
 
-while True:
-    schedule.run_pending()
-    time.sleep(30)
+    for item in entries:
+
+        text = item["raw"]
+
+        today_claim = parse_claiming_value(text)
+
+        if today_claim == 0:
+            continue
+
+        # Placeholder previous claim
+        # Replace later with PP parsing
+        previous_claim = today_claim * 2
+
+        if previous_claim > today_claim:
+
+            drop_pct = (
+                previous_claim - today_claim
+            ) / previous_claim
+
+            if drop_pct >= 0.40:
+
+                horses.append({
+
+                    "track": item["track"],
+
+                    "horse": text[:50],
+
+                    "today_claim": today_claim,
+
+                    "previous_claim": previous_claim,
+
+                    "rating": round(
+                        drop_pct
