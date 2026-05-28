@@ -262,8 +262,7 @@ while True:
 
     schedule.run_pending()
 
-    time.sleep(30)    if not matches:
-        return 0
+    time.sleep(30)   
 
     return int(matches[0].replace(',', ''))
 def detect_class_droppers(entries):
