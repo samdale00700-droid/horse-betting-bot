@@ -15,6 +15,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 # ==========================================
+# ODDS API CONFIG
+# ==========================================
+
+ODDS_API_KEY = os.getenv("ODDS_API_KEY")
+
+# ==========================================
 # TRACKS TO SCAN
 # ==========================================
 
@@ -35,6 +41,109 @@ def send_message(message):
     url = (
         f"https://api.telegram.org/bot"
         f"{BOT_TOKEN}/sendMessage"
+    )
+
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message
+    }
+
+    try:
+
+        requests.post(
+            url,
+            json=payload,
+            timeout=20
+        )
+
+    except Exception as e:
+
+        print(f"Telegram send failed: {e}")
+
+# ==========================================
+# GET BET365 ODDS
+# ==========================================
+
+def get_bet365_odds(horse_name):
+
+    try:
+
+        url = (
+            "https://api.the-odds-api.com/v4/sports/"
+            "horse-racing/odds/"
+        )
+
+        params = {
+            "apiKey": ODDS_API_KEY,
+            "regions": "uk",
+            "markets": "h2h",
+            "oddsFormat": "fractional"
+        }
+
+        response = requests.get(
+            url,
+            params=params,
+            timeout=20
+        )
+
+        data = response.json()
+
+        for race in data:
+
+            bookmakers = race.get(
+                "bookmakers",
+                []
+            )
+
+            for bookmaker in bookmakers:
+
+                if bookmaker.get("key") != "bet365":
+                    continue
+
+                markets = bookmaker.get(
+                    "markets",
+                    []
+                )
+
+                for market in markets:
+
+                    outcomes = market.get(
+                        "outcomes",
+                        []
+                    )
+
+                    for outcome in outcomes:
+
+                        name = outcome.get(
+                            "name",
+                            ""
+                        )
+
+                        if (
+                            horse_name.lower()
+                            in name.lower()
+                        ):
+
+                            return outcome.get(
+                                "price",
+                                "N/A"
+                            )
+
+        return "N/A"
+
+    except Exception as e:
+
+        print(f"Odds lookup failed: {e}")
+
+        return "N/A"
+
+# ==========================================
+# SCRAPE LIVE RACECARDS
+# ==========================================
+
+def get_racecard(track_code):
+
+    today = datetime.now().strftime("%m%d%Y")        f"{BOT_TOKEN}/sendMessage"
     )
 
     payload = {
