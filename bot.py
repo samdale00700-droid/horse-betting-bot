@@ -346,16 +346,12 @@ def detect_class_droppers(entries):
 
         text = item["raw"]
 
-        today_claim = parse_claiming_value(
-            text
-        )
+        today_claim = parse_claiming_value(text)
 
         if today_claim == 0:
             continue
 
-        previous_claim = (
-            today_claim * 2
-        )
+        previous_claim = today_claim * 2
 
         drop_pct = (
             previous_claim - today_claim
@@ -364,21 +360,22 @@ def detect_class_droppers(entries):
         if drop_pct >= 0.40:
 
             rating = round(
-                (
-                    drop_pct * 10
-                )
+                (drop_pct * 10)
                 + trainer_bonus(text),
                 1
             )
-import os
-import requests
-import schedule
-import time
-import re
-import sqlite3
 
-from bs4 import BeautifulSoup
-from datetime import datetime
+            horse_data = {
+                "track": item["track"],
+                "horse": text[:60],
+                "today_claim": today_claim,
+                "previous_claim": previous_claim,
+                "rating": rating
+            }
+
+            horses.append(horse_data)
+
+    return horses
 
 # ==========================================
 # CONFIG
