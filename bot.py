@@ -24,14 +24,6 @@ TRACKS = [
     "PEN"
 ]
 
-TOP_TRAINERS = [
-    "Asmussen",
-    "Cox",
-    "Pletcher",
-    "Baffert",
-    "Maker"
-]
-
 # ==========================================
 # DATABASE
 # ==========================================
@@ -43,19 +35,28 @@ conn = sqlite3.connect(
 
 cursor = conn.cursor()
 
-cursor.execute(
-    """
-    CREATE TABLE IF NOT EXISTS bets (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        horse TEXT,
-        track TEXT,
-        odds TEXT,
-        rating REAL,
-        result TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """
+# Bets table
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS bets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    horse TEXT,
+    track TEXT,
+    odds TEXT,
+    rating REAL,
+    result TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
+""")
+
+# Odds history table
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS odds_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    horse TEXT,
+    odds TEXT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
 
 conn.commit()
 
@@ -85,7 +86,23 @@ def send_message(message):
 
     except Exception as e:
 
-        print(e)
+        print(f"Telegram Error: {e}")
+
+# ==========================================
+# CLEAN HORSE NAME
+# ==========================================
+
+def clean_name(name):
+
+    name = name.lower()
+
+    name = re.sub(
+        r'[^a-z0-9 ]',
+        '',
+        name
+    )
+
+    return name.strip()
 
 # ==========================================
 # SAVE BET
@@ -127,7 +144,68 @@ def save_bet(
         print(e)
 
 # ==========================================
-# BET365 ODDS
+# SAVE ODDS HISTORY
+# ==========================================
+
+def save_odds_history(
+    horse,
+    odds
+):
+
+    try:
+
+        cursor.execute(
+            """
+            INSERT INTO odds_history (
+                horse,
+                odds
+            )
+            VALUES (?, ?)
+            """,
+            (
+                horse,
+                str(odds)
+            )
+        )
+
+        conn.commit()
+
+    except Exception as e:
+
+        print(e)
+
+# ==========================================
+# GET PREVIOUS ODDS
+# ==========================================
+
+def get_previous_odds(horse):
+
+    try:
+
+        cursor.execute(
+            """
+            SELECT odds
+            FROM odds_history
+            WHERE horse = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (horse,)
+        )
+
+        row = cursor.fetchone()
+
+        if row:
+            return row[0]
+
+    except Exception as e:
+
+        print(e)
+
+    return None
+
+# ==========================================
+# GET BET365 ODDS
 # ==========================================
 
 def get_bet365_odds(horse_name):
@@ -187,19 +265,15 @@ def get_bet365_odds(horse_name):
                             ""
                         )
 
-                        clean_horse = (
+                        clean_horse = clean_name(
                             horse_name
-                            .lower()
-                            .strip()
                         )
 
-                        clean_name = (
+                        clean_book = clean_name(
                             name
-                            .lower()
-                            .strip()
                         )
 
-                        if clean_horse == clean_name:
+                        if clean_horse == clean_book:
 
                             return outcome.get(
                                 "price",
@@ -242,74 +316,7 @@ def parse_claiming_value(text):
         return 0
 
 # ==========================================
-# TRAINER BONUS
-# ==========================================
-
-def trainer_bonus(text):
-
-    try:
-
-        for trainer in TOP_TRAINERS:
-
-            if (
-                trainer.lower()
-                in text.lower()
-            ):
-
-                return 1.5
-
-    except:
-        pass
-
-    return 0
-
-# ==========================================
-# AI PROBABILITY
-# ==========================================
-
-def calculate_ai_probability(rating):
-
-    try:
-
-        return min(
-            0.90,
-            rating / 10
-        )
-
-    except:
-
-        return 0
-
-# ==========================================
-# ODDS TO PROBABILITY
-# ==========================================
-
-def odds_to_probability(odds):
-
-    try:
-
-        if odds == "N/A":
-            return 0
-
-        parts = str(odds).split("/")
-
-        if len(parts) != 2:
-            return 0
-
-        numerator = float(parts[0])
-
-        denominator = float(parts[1])
-
-        return denominator / (
-            numerator + denominator
-        )
-
-    except:
-
-        return 0
-
-# ==========================================
-# GET RACECARD
+# STRUCTURED RACECARD PARSER
 # ==========================================
 
 def get_racecard(track_code):
@@ -345,36 +352,56 @@ def get_racecard(track_code):
             "html.parser"
         )
 
-        rows = soup.find_all("tr")
+        tables = soup.find_all("table")
 
-        for row in rows:
+        for table in tables:
 
-            text = row.get_text(
-                " ",
-                strip=True
-            )
+            rows = table.find_all("tr")
 
-            if len(text) < 20:
-                continue
+            for row in rows:
 
-            claim_value = (
-                parse_claiming_value(text)
-            )
+                cols = row.find_all("td")
 
-            horse_data = {
-                "track": track_code,
-                "horse": text[:50],
-                "raw": text,
-                "claim": claim_value
-            }
+                if len(cols) < 5:
+                    continue
 
-            horses.append(horse_data)
+                try:
+
+                    horse_name = cols[3].get_text(
+                        strip=True
+                    )
+
+                    row_text = row.get_text(
+                        " ",
+                        strip=True
+                    )
+
+                    claim_value = (
+                        parse_claiming_value(
+                            row_text
+                        )
+                    )
+
+                    if not horse_name:
+                        continue
+
+                    horse_data = {
+                        "track": track_code,
+                        "horse": horse_name,
+                        "raw": row_text,
+                        "claim": claim_value
+                    }
+
+                    horses.append(horse_data)
+
+                except:
+                    continue
 
         return horses
 
     except Exception as e:
 
-        print(e)
+        print(f"Racecard Error: {e}")
 
         return []
 
@@ -386,23 +413,19 @@ def detect_class_droppers(entries):
 
     horses = []
 
-    try:
+    for item in entries:
 
-        for item in entries:
-
-            text = item["raw"]
+        try:
 
             today_claim = item["claim"]
 
             if today_claim <= 0:
                 continue
 
+            # Temporary estimate
             previous_claim = (
                 today_claim * 2
             )
-
-            if previous_claim <= today_claim:
-                continue
 
             drop_pct = (
                 previous_claim - today_claim
@@ -412,10 +435,7 @@ def detect_class_droppers(entries):
                 continue
 
             rating = round(
-                (
-                    drop_pct * 10
-                )
-                + trainer_bonus(text),
+                drop_pct * 10,
                 1
             )
 
@@ -429,11 +449,58 @@ def detect_class_droppers(entries):
 
             horses.append(horse_data)
 
+        except Exception as e:
+
+            print(e)
+
+    return horses
+
+# ==========================================
+# TRACK RESULTS
+# ==========================================
+
+def update_results():
+
+    print("Result tracking started")
+
+    try:
+
+        cursor.execute(
+            """
+            SELECT id, horse
+            FROM bets
+            WHERE result = 'PENDING'
+            """
+        )
+
+        bets = cursor.fetchall()
+
+        for bet in bets:
+
+            bet_id = bet[0]
+
+            horse = bet[1]
+
+            # Placeholder
+            result = "UNKNOWN"
+
+            cursor.execute(
+                """
+                UPDATE bets
+                SET result = ?
+                WHERE id = ?
+                """,
+                (
+                    result,
+                    bet_id
+                )
+            )
+
+        conn.commit()
+
     except Exception as e:
 
         print(e)
-
-    return horses
 
 # ==========================================
 # DAILY SCAN
@@ -442,7 +509,7 @@ def detect_class_droppers(entries):
 def daily_scan():
 
     send_message(
-        "🚨 DAILY CLASS DROPPER REPORT 🚨"
+        "🚨 LIVE CLASS DROPPER SCAN 🚨"
     )
 
     all_horses = []
@@ -477,10 +544,10 @@ def daily_scan():
 
     top = ranked[:10]
 
-    if len(top) == 0:
+    if not top:
 
         send_message(
-            "No major class droppers found."
+            "No class droppers found."
         )
 
         return
@@ -491,25 +558,43 @@ def daily_scan():
             horse["horse"]
         )
 
-        ai_prob = (
-            calculate_ai_probability(
-                horse["rating"]
+        previous_odds = (
+            get_previous_odds(
+                horse["horse"]
             )
         )
 
-        market_prob = (
-            odds_to_probability(
-                odds
-            )
+        save_odds_history(
+            horse["horse"],
+            odds
         )
 
-        value_flag = ""
+        steam = ""
 
-        if ai_prob > market_prob:
+        if (
+            previous_odds
+            and previous_odds != "N/A"
+            and odds != "N/A"
+        ):
 
-            value_flag = (
-                "✅ VALUE BET"
-            )
+            try:
+
+                old_num = float(
+                    previous_odds.split("/")[0]
+                )
+
+                new_num = float(
+                    odds.split("/")[0]
+                )
+
+                if new_num < old_num:
+
+                    steam = (
+                        "🔥 STEAM MOVE"
+                    )
+
+            except:
+                pass
 
         msg = (
             f"🏇 {horse['track']}\n\n"
@@ -522,7 +607,7 @@ def daily_scan():
             f"{odds}\n\n"
             f"AI Rating:\n"
             f"{horse['rating']}/10\n\n"
-            f"{value_flag}"
+            f"{steam}"
         )
 
         send_message(msg)
@@ -539,22 +624,30 @@ def daily_scan():
 # ==========================================
 
 send_message(
-    "✅ Horse betting bot is online."
+    "✅ Horse betting bot online."
 )
 
 print(
-    "Telegram Betting Bot Running..."
+    "Horse Bot Running..."
 )
 
 # ==========================================
-# STARTUP TEST SCAN
+# STARTUP TEST
 # ==========================================
 
 daily_scan()
 
 # ==========================================
+# UPDATE RESULTS
+# ==========================================
+
+schedule.every(30).minutes.do(
+    update_results
+)
+
+# ==========================================
 # RUN EVERY MINUTE
-# BETWEEN 13:00 AND 16:59
+# 13:00 TO 16:59
 # ==========================================
 
 def scheduled_scan():
