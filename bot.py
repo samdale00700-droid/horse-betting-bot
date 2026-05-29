@@ -356,6 +356,8 @@ def get_racecard(track_code):
             f"{track_code}{today}.html"
         )
 
+        print(f"Fetching: {url}")
+
         response = requests.get(
             url,
             headers=HEADERS,
@@ -375,71 +377,70 @@ def get_racecard(track_code):
             "html.parser"
         )
 
-        race_number = 0
+        text = soup.get_text(
+            "\n",
+            strip=True
+        )
 
-        tables = soup.find_all("table")
+        lines = text.split("\n")
 
-        for table in tables:
+        race_number = 1
 
-            rows = table.find_all("tr")
+        for line in lines:
 
-            for row in rows:
+            line = line.strip()
 
-                text = row.get_text(
-                    " ",
-                    strip=True
+            # detect race numbers
+            if "Race " in line:
+
+                race_match = re.search(
+                    r'Race\s+(\d+)',
+                    line
                 )
 
-                if "Race " in text:
+                if race_match:
 
-                    race_match = re.search(
-                        r'Race\s+(\d+)',
-                        text
+                    race_number = (
+                        race_match.group(1)
                     )
 
-                    if race_match:
+            # horse names tend to be short
+            # clean text lines
+            if (
+                len(line) >= 4
+                and len(line) <= 30
+                and not any(char.isdigit() for char in line)
+                and "(" not in line
+                and ")" not in line
+                and "Race" not in line
+                and "Claiming" not in line
+                and "Allowance" not in line
+                and "Trainer" not in line
+                and "Jockey" not in line
+            ):
 
-                        race_number = (
-                            race_match.group(1)
-                        )
+                horse = {
 
-                cols = row.find_all("td")
+                    "track": track_code,
 
-                if len(cols) < 5:
-                    continue
+                    "race": race_number,
 
-                try:
+                    "horse": line,
 
-                    horse_name = cols[3].get_text(
-                        strip=True
-                    )
+                    "raw": line,
 
-                    if (
-                        len(horse_name) < 2
-                    ):
-                        continue
+                    # fallback claim value
+                    "claim": 10000
+                }
 
-                    claim_value = (
-                        parse_claiming_value(
-                            text
-                        )
-                    )
+                horses.append(horse)
 
-                    horse = {
-                        "track": track_code,
-                        "race": race_number,
-                        "horse": horse_name,
-                        "raw": text,
-                        "claim": claim_value
-                    }
+        print(
+            f"{track_code} horses found: "
+            f"{len(horses)}"
+        )
 
-                    horses.append(horse)
-
-                except Exception as e:
-
-                    print(e)
-
-        return horses
+        return horses[:50]
 
     except Exception as e:
 
