@@ -395,93 +395,28 @@ def detect_class_droppers(entries):
 def daily_scan():
 
     send_message(
-        "🚨 LIVE DAILY CLASS DROPPER REPORT 🚨"
+        "✅ TEST SCAN STARTED"
     )
 
-    all_horses = []
+    send_message(
+        f"Tracks loaded: {TRACKS}"
+    )
 
     for track in TRACKS:
 
+        send_message(
+            f"Scanning {track}"
+        )
+
         entries = get_racecard(track)
 
-        droppers = (
-            detect_class_droppers(
-                entries
-            )
-        )
-
-        all_horses.extend(
-            droppers
-        )
-
-    ranked = sorted(
-        all_horses,
-        key=lambda x: x["rating"],
-        reverse=True
-    )
-
-    top = ranked[:10]
-
-    if not top:
-
         send_message(
-            "No major class droppers detected today."
+            f"{track} races found: {len(entries)}"
         )
 
-        return
-
-    for horse in top:
-
-        odds = get_bet365_odds(
-            horse["horse"]
-        )
-
-        ai_prob = (
-            calculate_ai_probability(
-                horse["rating"]
-            )
-        )
-
-        market_prob = (
-            odds_to_probability(
-                odds
-            )
-        )
-
-        value_flag = ""
-
-        if ai_prob > market_prob:
-
-            value_flag = (
-                "✅ VALUE BET DETECTED"
-            )
-
-        msg = f'''
-🏇 {horse['track']}
-
-{horse['horse']}
-
-Claim Drop:
-${horse['previous_claim']:,} → ${horse['today_claim']:,}
-
-Bet365 Odds:
-{odds}
-
-AI Rating:
-{horse['rating']}/10
-
-{value_flag}
-'''
-
-        send_message(msg)
-
-        save_bet(
-            horse["horse"],
-            horse["track"],
-            odds,
-            horse["rating"]
-        )
-
+    send_message(
+        "✅ TEST SCAN COMPLETE"
+    )
 # ==========================================
 # STARTUP MESSAGE
 # ==========================================
