@@ -240,15 +240,14 @@ def get_racecard(track_code):
                 strip=True
             )
 
-            if (
-                "Claiming" in text
-                or "Maiden Claiming" in text
-            ):
+            if len(text) > 20:
 
-                horses.append({
-                    "raw": text,
-                    "track": track_code
-                })
+    print(text)
+
+    horses.append({
+        "raw": text,
+        "track": track_code
+    })
 
         return horses
 
