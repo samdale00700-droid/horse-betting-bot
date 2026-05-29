@@ -7,6 +7,7 @@ import sqlite3
 
 from bs4 import BeautifulSoup
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # ==========================================
 # CONFIG
@@ -118,7 +119,7 @@ def clean_name(name):
     return name.strip()
 
 # ==========================================
-# CLAIM VALUE
+# PARSE CLAIM VALUE
 # ==========================================
 
 def parse_claiming_value(text):
@@ -256,13 +257,13 @@ def save_bet(
         print(e)
 
 # ==========================================
-# BET365 ODDS
+# GET ODDS
 # ==========================================
 
 def get_bet365_odds(horse_name):
 
     if not ODDS_API_KEY:
-        return "N/A"
+        return "No API Key"
 
     try:
 
@@ -273,7 +274,7 @@ def get_bet365_odds(horse_name):
 
         params = {
             "apiKey": ODDS_API_KEY,
-            "regions": "uk",
+            "regions": "us,uk",
             "markets": "h2h"
         }
 
@@ -285,6 +286,16 @@ def get_bet365_odds(horse_name):
 
         data = response.json()
 
+        print(data)
+
+        allowed_books = [
+            "bet365",
+            "fanduel",
+            "draftkings",
+            "bovada",
+            "betmgm"
+        ]
+
         for race in data:
 
             bookmakers = race.get(
@@ -294,7 +305,12 @@ def get_bet365_odds(horse_name):
 
             for bookmaker in bookmakers:
 
-                if bookmaker.get("key") != "bet365":
+                book_key = bookmaker.get(
+                    "key",
+                    ""
+                )
+
+                if book_key not in allowed_books:
                     continue
 
                 markets = bookmaker.get(
@@ -317,17 +333,21 @@ def get_bet365_odds(horse_name):
                         )
 
                         if (
-                            clean_name(name)
-                            ==
                             clean_name(horse_name)
+                            in clean_name(name)
                         ):
 
-                            return outcome.get(
+                            price = outcome.get(
                                 "price",
                                 "N/A"
                             )
 
-        return "N/A"
+                            return (
+                                f"{price} "
+                                f"({book_key})"
+                            )
+
+        return "No Odds"
 
     except Exception as e:
 
@@ -335,7 +355,7 @@ def get_bet365_odds(horse_name):
             f"Odds Error: {e}"
         )
 
-        return "N/A"
+        return "No Odds"
 
 # ==========================================
 # SCRAPE RACECARDS
@@ -347,9 +367,11 @@ def get_racecard(track_code):
 
     try:
 
-        today = datetime.now().strftime(
-            "%m%d%Y"
-        )
+        today = datetime.now(
+            ZoneInfo("America/New_York")
+        ).strftime("%m%d%Y")
+
+        print(f"Using US date: {today}")
 
         url = (
             f"https://www.equibase.com/static/entry/"
@@ -390,7 +412,6 @@ def get_racecard(track_code):
 
             line = line.strip()
 
-            # detect race numbers
             if "Race " in line:
 
                 race_match = re.search(
@@ -404,8 +425,6 @@ def get_racecard(track_code):
                         race_match.group(1)
                     )
 
-            # horse names tend to be short
-            # clean text lines
             if (
                 len(line) >= 4
                 and len(line) <= 30
@@ -429,7 +448,6 @@ def get_racecard(track_code):
 
                     "raw": line,
 
-                    # fallback claim value
                     "claim": 10000
                 }
 
@@ -451,7 +469,7 @@ def get_racecard(track_code):
         return []
 
 # ==========================================
-# PAST PERFORMANCE PARSER
+# PAST PERFORMANCE
 # ==========================================
 
 def get_past_performance(horse_name):
@@ -463,12 +481,6 @@ def get_past_performance(horse_name):
     }
 
     try:
-
-        # FALLBACK LOGIC
-        # Real PP scrape unreliable
-        # but this keeps bot active
-
-        estimated_claim = 0
 
         name_len = len(horse_name)
 
@@ -483,12 +495,10 @@ def get_past_performance(horse_name):
 
         pp["last_claim"] = estimated_claim
 
-        # RANDOMIZED SPEED LOGIC
         pp["last_speed"] = (
             60 + (name_len % 25)
         )
 
-        # ESTIMATED FINISH
         pp["last_finish"] = (
             str((name_len % 5) + 1)
         )
@@ -519,7 +529,6 @@ def detect_class_droppers(entries):
 
             today_claim = item["claim"]
 
-            # FALLBACK IF NO CLAIM
             if today_claim <= 0:
                 today_claim = 10000
 
@@ -533,14 +542,12 @@ def detect_class_droppers(entries):
                 pp["last_claim"]
             )
 
-            # FALLBACK
             if previous_claim <= 0:
 
                 previous_claim = (
                     today_claim * 1.5
                 )
 
-            # ENSURE DROP EXISTS
             if previous_claim <= today_claim:
 
                 previous_claim = (
@@ -551,11 +558,10 @@ def detect_class_droppers(entries):
                 previous_claim - today_claim
             ) / previous_claim
 
-            # RELAXED FILTER
+            # VERY RELAXED FILTER
             if drop_pct < 0.05:
                 continue
 
-            # SPEED BONUS
             speed_bonus = 0
 
             if pp["last_speed"] >= 80:
@@ -564,7 +570,6 @@ def detect_class_droppers(entries):
             elif pp["last_speed"] >= 70:
                 speed_bonus += 1
 
-            # FINISH BONUS
             finish_bonus = 0
 
             try:
@@ -624,7 +629,7 @@ def detect_class_droppers(entries):
     return horses
 
 # ==========================================
-# RESULTS TRACKER
+# RESULTS
 # ==========================================
 
 def update_results():
@@ -708,16 +713,16 @@ def daily_scan():
 
             if (
                 previous_odds
-                and odds != "N/A"
-                and previous_odds != "N/A"
+                and odds != "No Odds"
+                and previous_odds != "No Odds"
             ):
 
                 old_odds = float(
-                    previous_odds.split("/")[0]
+                    str(previous_odds).split("/")[0]
                 )
 
                 new_odds = float(
-                    odds.split("/")[0]
+                    str(odds).split("/")[0]
                 )
 
                 if new_odds < old_odds:
@@ -749,7 +754,7 @@ def daily_scan():
             f"Last Speed Figure:\n"
             f"{horse['last_speed']}\n\n"
 
-            f"Bet365 Odds:\n"
+            f"Odds:\n"
             f"{odds}\n\n"
 
             f"AI Rating:\n"
@@ -801,9 +806,11 @@ schedule.every(30).minutes.do(
 
 def scheduled_scan():
 
-    hour = datetime.now().hour
+    hour = datetime.now(
+        ZoneInfo("America/New_York")
+    ).hour
 
-    if hour >= 13 and hour <= 16:
+    if hour >= 10 and hour <= 23:
 
         daily_scan()
 
