@@ -3,9 +3,15 @@ import requests
 import schedule
 import time
 import re
+import sqlite3
+import math
 
 from bs4 import BeautifulSoup
 from datetime import datetime
+
+# ==========================================
+# CONFIG
+# ==========================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -19,6 +25,42 @@ TRACKS = [
     "PEN"
 ]
 
+TOP_TRAINERS = [
+    "Asmussen",
+    "Cox",
+    "Pletcher",
+    "Baffert",
+    "Maker"
+]
+
+# ==========================================
+# DATABASE
+# ==========================================
+
+conn = sqlite3.connect(
+    "horses.db",
+    check_same_thread=False
+)
+
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS bets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    horse TEXT,
+    track TEXT,
+    odds TEXT,
+    rating REAL,
+    result TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+conn.commit()
+
+# ==========================================
+# TELEGRAM MESSAGE
+# ==========================================
 
 def send_message(message):
 
@@ -44,6 +86,42 @@ def send_message(message):
 
         print(e)
 
+# ==========================================
+# SAVE BET
+# ==========================================
+
+def save_bet(
+    horse,
+    track,
+    odds,
+    rating
+):
+
+    cursor.execute(
+        """
+        INSERT INTO bets (
+            horse,
+            track,
+            odds,
+            rating,
+            result
+        )
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            horse,
+            track,
+            odds,
+            rating,
+            "PENDING"
+        )
+    )
+
+    conn.commit()
+
+# ==========================================
+# BET365 ODDS
+# ==========================================
 
 def get_bet365_odds(horse_name):
 
@@ -99,7 +177,10 @@ def get_bet365_odds(horse_name):
                             ""
                         )
 
-                        if horse_name.lower() in name.lower():
+                        if (
+                            horse_name.lower()
+                            in name.lower()
+                        ):
 
                             return outcome.get(
                                 "price",
@@ -114,10 +195,15 @@ def get_bet365_odds(horse_name):
 
         return "N/A"
 
+# ==========================================
+# SCRAPE RACECARDS
+# ==========================================
 
 def get_racecard(track_code):
 
-    today = datetime.now().strftime("%m%d%Y")
+    today = datetime.now().strftime(
+        "%m%d%Y"
+    )
 
     url = (
         f"https://www.equibase.com/static/entry/"
@@ -173,6 +259,9 @@ def get_racecard(track_code):
 
         return []
 
+# ==========================================
+# CLAIM VALUE PARSER
+# ==========================================
 
 def parse_claiming_value(text):
 
@@ -184,7 +273,10 @@ def parse_claiming_value(text):
     if not matches:
         return 0
 
-    value = matches[0].replace(",", "")
+    value = matches[0].replace(
+        ",",
+        ""
+    )
 
     try:
         return int(value)
@@ -192,6 +284,61 @@ def parse_claiming_value(text):
     except:
         return 0
 
+# ==========================================
+# TRAINER BONUS
+# ==========================================
+
+def trainer_bonus(text):
+
+    for trainer in TOP_TRAINERS:
+
+        if trainer.lower() in text.lower():
+
+            return 1.5
+
+    return 0
+
+# ==========================================
+# AI PROBABILITY
+# ==========================================
+
+def calculate_ai_probability(rating):
+
+    return min(
+        0.90,
+        rating / 10
+    )
+
+# ==========================================
+# ODDS TO PROBABILITY
+# ==========================================
+
+def odds_to_probability(odds):
+
+    try:
+
+        if odds == "N/A":
+            return 0
+
+        parts = str(odds).split("/")
+
+        if len(parts) != 2:
+            return 0
+
+        numerator = float(parts[0])
+        denominator = float(parts[1])
+
+        return denominator / (
+            numerator + denominator
+        )
+
+    except:
+
+        return 0
+
+# ==========================================
+# CLASS DROPPER DETECTION
+# ==========================================
 
 def detect_class_droppers(entries):
 
@@ -201,18 +348,30 @@ def detect_class_droppers(entries):
 
         text = item["raw"]
 
-        today_claim = parse_claiming_value(text)
+        today_claim = parse_claiming_value(
+            text
+        )
 
         if today_claim == 0:
             continue
 
-        previous_claim = today_claim * 2
+        previous_claim = (
+            today_claim * 2
+        )
 
         drop_pct = (
             previous_claim - today_claim
         ) / previous_claim
 
         if drop_pct >= 0.40:
+
+            rating = round(
+                (
+                    drop_pct * 10
+                )
+                + trainer_bonus(text),
+                1
+            )
 
             horses.append({
 
@@ -224,14 +383,14 @@ def detect_class_droppers(entries):
 
                 "previous_claim": previous_claim,
 
-                "rating": round(
-                    drop_pct * 10,
-                    1
-                )
+                "rating": rating
             })
 
     return horses
 
+# ==========================================
+# DAILY SCAN
+# ==========================================
 
 def daily_scan():
 
@@ -245,9 +404,15 @@ def daily_scan():
 
         entries = get_racecard(track)
 
-        droppers = detect_class_droppers(entries)
+        droppers = (
+            detect_class_droppers(
+                entries
+            )
+        )
 
-        all_horses.extend(droppers)
+        all_horses.extend(
+            droppers
+        )
 
     ranked = sorted(
         all_horses,
@@ -271,7 +436,27 @@ def daily_scan():
             horse["horse"]
         )
 
-        msg = f"""
+        ai_prob = (
+            calculate_ai_probability(
+                horse["rating"]
+            )
+        )
+
+        market_prob = (
+            odds_to_probability(
+                odds
+            )
+        )
+
+        value_flag = ""
+
+        if ai_prob > market_prob:
+
+            value_flag = (
+                "✅ VALUE BET DETECTED"
+            )
+
+        msg = f'''
 🏇 {horse['track']}
 
 {horse['horse']}
@@ -284,21 +469,42 @@ Bet365 Odds:
 
 AI Rating:
 {horse['rating']}/10
-"""
+
+{value_flag}
+'''
 
         send_message(msg)
 
+        save_bet(
+            horse["horse"],
+            horse["track"],
+            odds,
+            horse["rating"]
+        )
+
+# ==========================================
+# STARTUP MESSAGE
+# ==========================================
 
 send_message(
     "✅ Horse betting bot is online."
 )
 
+# ==========================================
+# SCHEDULE
+# ==========================================
+
 schedule.every().day.at(
     "13:00"
 ).do(daily_scan)
 
-print("Telegram Betting Bot Running...")
+print(
+    "Telegram Betting Bot Running..."
+)
 
+# ==========================================
+# MAIN LOOP
+# ==========================================
 
 while True:
 
