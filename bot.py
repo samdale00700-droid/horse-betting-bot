@@ -552,7 +552,7 @@ def detect_class_droppers(entries):
             ) / previous_claim
 
             # RELAXED FILTER
-            if drop_pct < 0.10:
+            if drop_pct < 0.05:
                 continue
 
             # SPEED BONUS
