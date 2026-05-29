@@ -240,7 +240,7 @@ def get_racecard(track_code):
                 strip=True
             )
 
-            if len(text) > 20:
+    if len(text) > 20:
 
     print(text)
 
